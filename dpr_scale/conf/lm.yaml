@@ -1,0 +1,32 @@
+defaults:
+  - config
+  - override task: lm
+  - override checkpoint_callback: periodic_checkpoint
+  
+    
+task:
+  optim:
+    lr: 2e-4
+  warmup_steps: 1237
+
+datamodule:
+  _target_: dpr_scale.datamodule.lm.LanguageModelingJsonlDataModule
+  train_path: cc_net_gpt_tokenized/en_head_train_v0.1_sample0.3_shard*.jsonl+enwiki_gpt_tokenized/en_head_train.jsonl
+  val_path: cc_net_gpt_tokenized/en_head_debug.jsonl
+  test_path: cc_net_gpt_tokenized/en_head_debug.jsonl
+  batch_size: 2
+
+trainer:
+  gpus: 8
+  num_nodes: 1
+  max_epochs: 2
+  num_sanity_val_steps: 0
+  log_every_n_steps: 10
+  gradient_clip_val: 2.0
+  precision: 16
+  strategy: ddp_sharded
+  limit_val_batches: 0
+
+checkpoint_callback:
+  save_weights_only: true
+  every: 10000

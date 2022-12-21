@@ -1,0 +1,4 @@
+# @package _group_
+_target_: dpr_scale.task.mlm_task.MaskedLanguageModelingTask
+warmup_steps: null
+pretrained_checkpoint_path:

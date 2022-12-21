@@ -1,0 +1,3 @@
+# @package _group_
+_target_: dpr_scale.transforms.hf_transform.HFTransform
+max_seq_len: 256

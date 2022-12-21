@@ -1,0 +1,5 @@
+# @package _group_
+_target_: dpr_scale.checkpoint_callback.periodic_checkpoint.PeriodicCheckpoint
+every: 100
+save_last: true
+verbose: true
