@@ -27,7 +27,8 @@ Currently, the repo contains the code for inference. Stay tuned for the code for
 4. [Open-set Experiments](#open-set-experiments)
     * [Baselines](#baselines-on-open-set-tasks)
     * [NPM](#npm-on-open-set-tasks)
-5. [Contact](#contact)
+5. [License](#license)
+6. [Contact](#contact)
 
 ## Requirements
 
@@ -194,8 +195,10 @@ python -m scripts.prompt \
 
 To evaluate on TempLAMA, use `new-enwiki` instead of `enwiki`, and use `--eval_dataset {templama|unchanged_templama}`.
 
-## Contact
+## License
+MetaICL is CC-BY-NC 4.0 licensed.
 
+## Contact
 Please leave Github issues or contact Sewon Min `sewon@cs.washington.edu` for any questions.
 
 
