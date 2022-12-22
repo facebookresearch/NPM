@@ -75,10 +75,11 @@ if [[ $1 == "open" ]] ; then
     rm -rf kamel.zip
     rm -rf data/kamel/__MACOSX
 
-    # Entity translation (data provided by us)
+    # Entity translation (released by us)
+
     wget https://dl.fbaipublicfiles.com/NPM/entity_translation.tar.gz -O data/entity_translation.tar.gz
     tar -xf data/entity_translation.tar.gz -C data && rm -f data/entity_translation.tar.gz
-
+    
 fi
 
 if [[ $1 == "templama" ]] ; then
