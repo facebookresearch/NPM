@@ -38,8 +38,7 @@ class NPM(NPMSingle):
 
         return all_scores, all_indices, knn_ids
 
-    def predict_span(self, query_text, ngram_max, valid_func=None,
-                     normalize_separate=False, alphas=[0.0]):
+    def predict_span(self, query_text, ngram_max, valid_func=None, normalize_separate=True, alphas=[0.0]):
 
         # first, obtain query emb
         inputs = self.model.tokenizer(query_text)
