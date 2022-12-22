@@ -7,14 +7,11 @@ Makefile
 *tmp*
 *.txt
 *.html
-*.pdf
-*.png
 *.out
 *.err
 *.log
 *.json
 *.npy
-*.sh
 task_data
 core
 data
