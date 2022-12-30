@@ -44,6 +44,7 @@ class MaskedLanguageModelingTask(LightningModule):
         shared_encoder: bool = True,
         contrastive_warmup_steps: int = 0,
         contrastive_maskout_same_block: bool = True,
+        contrastive_negative_selection: str = None,
         sim_score_type: str = "inner",
         do_phrase: bool = True,
         pretrained_checkpoint_path: str = "",
@@ -72,6 +73,7 @@ class MaskedLanguageModelingTask(LightningModule):
         assert self.sim_score_type in ["inner", "l2"]
         self.contrastive_warmup_steps = contrastive_warmup_steps
         self.contrastive_maskout_same_block = contrastive_maskout_same_block
+        self.contrastive_negative_selection = contrastive_negative_selection
         self.contrastive_temperature = None
 
         self.do_phrase = do_phrase
@@ -232,9 +234,6 @@ class MaskedLanguageModelingTask(LightningModule):
         return loss
 
     def _do_encode(self, batch):
-        has_labels = batch.get("labels", None) is not None and not self.contrastive_ignore_precomputed_labels
-        assert not has_labels
-
         assert batch["input_ids"].shape==batch["masked_input_ids"].shape==batch["attention_mask"].shape
         if "masked_attention_mask" in batch:
             assert batch["attention_mask"].shape==batch["masked_attention_mask"].shape
@@ -244,7 +243,7 @@ class MaskedLanguageModelingTask(LightningModule):
             masked_input_ids = batch["masked_input_ids"].reshape(-1, batch["masked_input_ids"].shape[-1])
             input_ids = batch["input_ids"].reshape(-1, batch["input_ids"].shape[-1])
             if "masked_attention_mask" in batch:
-                assert self.do_multi_token is not None
+                assert self.do_phrase is not None
                 masked_attention_mask = batch["masked_attention_mask"].reshape(-1, batch["masked_attention_mask"].shape[-1])
             else:
                 masked_attention_mask = attention_mask
@@ -257,7 +256,7 @@ class MaskedLanguageModelingTask(LightningModule):
             masked_input_ids = batch["masked_input_ids"]
             input_ids = batch["input_ids"]
             if "masked_attention_mask" in batch:
-                assert self.do_multi_token is not None
+                assert self.do_phrase
                 masked_attention_mask = batch["masked_attention_mask"]
             else:
                 masked_attention_mask = attention_mask
@@ -265,8 +264,6 @@ class MaskedLanguageModelingTask(LightningModule):
                 label_mask = batch["label_mask"]
             else:
                 label_mask = input_ids!=masked_input_ids
-
-        assert self.shared_model
 
         query_outputs = self.encoder({"input_ids": masked_input_ids,
                                       "attention_mask": masked_attention_mask,
@@ -413,7 +410,7 @@ class MaskedLanguageModelingTask(LightningModule):
         all_targets = all_targets.reshape(-1)
 
         # now, start computing labels
-        if self.phrases:
+        if self.do_phrase:
             label_mask = _label_mask.reshape(-1)
         else:
 
@@ -443,21 +440,17 @@ class MaskedLanguageModelingTask(LightningModule):
 
         # squeeze to save memory
         valid_indices = torch.nonzero(label_mask).squeeze(-1)
-
         hidden_states = torch.index_select(hidden_states, 0, valid_indices)
-        if self.do_multi_token is None:
+        if not self.do_phrase:
             labels = torch.index_select(labels, 0, valid_indices)
         label_mask = torch.index_select(label_mask, 0, valid_indices)
         score_mask = torch.index_select(score_mask, 0, valid_indices)
 
         if torch.sum(label_mask)==0:
             pass
-        elif self.do_phrases:
+        elif self.do_phrase:
             targets = batch["labels"]
-            if self.do_multi_token=="two_mask":
-                assert valid_indices.shape[0]==2*targets.shape[0]
-            else:
-                assert valid_indices.shape[0]==targets.shape[0]
+            assert valid_indices.shape[0]==2*targets.shape[0]
             all_targets = all_targets.reshape(-1, length)
             shifted_all_targets = [all_targets]
 
@@ -486,18 +479,14 @@ class MaskedLanguageModelingTask(LightningModule):
                 curr_mask = (idx_vector==shift).unsqueeze(-1)
                 end_labels = end_labels * (~curr_mask) + prev_end_labels * curr_mask
 
-            if self.do_multi_token=="two_mask":
-                start_hidden_states, end_hidden_states = torch.unbind(
-                    hidden_states.reshape(-1, 2, hidden_states.shape[-1]), 1)
-                score_mask, extra_score_mask = torch.unbind(
-                    score_mask.reshape(-1, 2, score_mask.shape[-1]), 1)
-                label_mask, extra_label_mask = torch.unbind(
-                    label_mask.reshape(-1, 2), 1)
-                assert torch.sum(score_mask!=extra_score_mask)==0
-                assert torch.sum(label_mask!=extra_label_mask)==0
-            else:
-                start_hidden_states = hidden_states[:, :all_hidden_states.shape[-1]]
-                end_hidden_states = hidden_states[:, all_hidden_states.shape[-1]:]
+            start_hidden_states, end_hidden_states = torch.unbind(
+                hidden_states.reshape(-1, 2, hidden_states.shape[-1]), 1)
+            score_mask, extra_score_mask = torch.unbind(
+                score_mask.reshape(-1, 2, score_mask.shape[-1]), 1)
+            label_mask, extra_label_mask = torch.unbind(
+                label_mask.reshape(-1, 2), 1)
+            assert torch.sum(score_mask!=extra_score_mask)==0
+            assert torch.sum(label_mask!=extra_label_mask)==0
 
             start_labels = torch.logical_and(start_labels, score_mask)
             end_labels = torch.logical_and(end_labels, score_mask)
@@ -530,10 +519,10 @@ class MaskedLanguageModelingTask(LightningModule):
             start_end_same = torch.all(start_labels==end_labels, -1)
             self.log("start_end_same", torch.mean(start_end_same.float()))
 
+        else:
             scores = self._compute_simscores(hidden_states, all_hidden_states, score_mask)
             if self.global_step < 5:
                 print ("Finish getting scores (%s)" % str(scores.shape))
-
             loss += _get_contrastive_loss(scores, labels, score_mask=score_mask, label_mask=label_mask)
 
         if self.global_step < 5:
@@ -543,7 +532,7 @@ class MaskedLanguageModelingTask(LightningModule):
 
 class MaskedLanguageModelingEncodingTask(MaskedLanguageModelingTask):
 
-    def __init__(self, ctx_embeddings_dir, checkpoint_path, remove_stopwords=False, **kwargs):
+    def __init__(self, ctx_embeddings_dir, checkpoint_path=None, remove_stopwords=False, **kwargs):
         super().__init__(**kwargs)
         self.ctx_embeddings_dir = ctx_embeddings_dir
         self.checkpoint_path = checkpoint_path
@@ -553,7 +542,7 @@ class MaskedLanguageModelingEncodingTask(MaskedLanguageModelingTask):
 
         if self.remove_stopwords:
             stopwords = set()
-            stopwords_dir = "/private/home/sewonmin/token-retrieval/task_data"
+            stopwords_dir = "/".join(self.checkpoint_path.split("/")[:-3]) + "/config"
             with open(os.path.join(stopwords_dir, "roberta_stopwords.txt")) as f:
                 for line in f:
                     stopwords.add(int(line.strip()))
@@ -565,14 +554,17 @@ class MaskedLanguageModelingEncodingTask(MaskedLanguageModelingTask):
         super().setup("train")
 
     def _eval_step(self, batch, batch_idx):
+        is_valid = batch["is_valid"]
         batch = {"input_ids": batch["input_ids"],
                  "attention_mask": batch["attention_mask"],
                  "output_hidden_states": True}
 
         outputs = self.encoder(batch)
         hidden_states = outputs.hidden_states[-1] # [batch_size, length, hidden]
+
         return batch["input_ids"].cpu(), \
             batch["attention_mask"].bool().cpu(), \
+            is_valid.bool().cpu(), \
             hidden_states.half().cpu()
 
     def test_step(self, batch, batch_idx):
@@ -592,16 +584,18 @@ class MaskedLanguageModelingEncodingTask(MaskedLanguageModelingTask):
 
         dstore_keys = None
 
-        def _filter(curr_input_ids, curr_attention_mask, curr_hidden_states):
-            assert len(curr_input_ids.shape)==len(curr_attention_mask.shape)==1 and len(curr_hidden_states.shape)==2
+        def _filter(curr_input_ids, curr_attention_mask, curr_is_valid, curr_hidden_states):
+            assert len(curr_input_ids.shape)==len(curr_attention_mask.shape)==len(curr_is_valid.shape)==1
+            assert len(curr_hidden_states.shape)==2
             offset = torch.sum(curr_attention_mask)
             curr_hidden_states = curr_hidden_states[:offset].numpy()
 
             curr_input_ids = curr_input_ids.numpy().tolist()
+            curr_is_valid = curr_is_valid.numpy().tolist()
 
             vec = []
             for i, hidden_states in enumerate(curr_hidden_states):
-                if curr_input_ids[i] in [0, 2]:
+                if not curr_is_valid[i]:
                     continue
                 # if the current word is stopword, we don't have to save it
                 if self.remove_stopwords and curr_input_ids[i] in self.stopwords:
@@ -612,48 +606,32 @@ class MaskedLanguageModelingEncodingTask(MaskedLanguageModelingTask):
             return np.stack(vec, 0)
 
         dstore_size = 0
-        for input_ids, attention_mask, hidden_states in tqdm(outputs):
-            for curr_input_ids, curr_attention_mask, curr_hidden_states in zip(input_ids, attention_mask, hidden_states):
-                if len(curr_input_ids.shape)==len(curr_attention_mask.shape)==2 and len(curr_hidden_states.shape)==3:
-                    pass
-                else:
-                    curr_input_ids = [curr_input_ids]
-                    curr_attention_mask = [curr_attention_mask]
-                    curr_hidden_states = [curr_hidden_states]
-
-                for _curr_input_ids, _curr_attention_mask, _curr_hidden_states in \
-                        zip(curr_input_ids, curr_attention_mask, curr_hidden_states):
-                    vec = _filter(_curr_input_ids, _curr_attention_mask, _curr_hidden_states)
-                    if vec is not None:
-                        dstore_size += len(vec)
+        for input_ids, attention_mask, is_valid, hidden_states in tqdm(outputs):
+            for curr_input_ids, curr_attention_mask, curr_is_valid, curr_hidden_states in \
+                    zip(input_ids, attention_mask, is_valid, hidden_states):
+                vec = _filter(curr_input_ids, curr_attention_mask, curr_is_valid, curr_hidden_states)
+                if vec is not None:
+                    dstore_size += len(vec)
 
         print ("Start saving %d embeddings at %s" % (dstore_size, embed_path))
 
         dstore_keys = None
 
         tot = 0
-        for input_ids, attention_mask, hidden_states in tqdm(outputs):
-            for curr_input_ids, curr_attention_mask, curr_hidden_states in zip(input_ids, attention_mask, hidden_states):
-                if len(curr_input_ids.shape)==len(curr_attention_mask.shape)==2 and len(curr_hidden_states.shape)==3:
-                    pass
-                else:
-                    curr_input_ids = [curr_input_ids]
-                    curr_attention_mask = [curr_attention_mask]
-                    curr_hidden_states = [curr_hidden_states]
+        for input_ids, attention_mask, is_valid, hidden_states in tqdm(outputs):
+            for curr_input_ids, curr_attention_mask, curr_is_valid, curr_hidden_states in \
+                    zip(input_ids, attention_mask, is_valid, hidden_states):
+                vec = _filter(curr_input_ids, curr_attention_mask, curr_is_valid, curr_hidden_states)
+                if vec is None:
+                    continue
+                if dstore_keys is None:
+                    dstore_keys = np.memmap(embed_path,
+                                            dtype=np.float16 if use_half_precision else np.float32,
+                                            mode='w+',
+                                            shape=(dstore_size, vec.shape[-1]))
 
-                for _curr_input_ids, _curr_attention_mask, _curr_hidden_states in \
-                        zip(curr_input_ids, curr_attention_mask, curr_hidden_states):
-                    vec = _filter(_curr_input_ids, _curr_attention_mask, _curr_hidden_states)
-                    if vec is None:
-                        continue
-                    if dstore_keys is None:
-                        dstore_keys = np.memmap(embed_path,
-                                                dtype=np.float16 if use_half_precision else np.float32,
-                                                mode='w+',
-                                                shape=(dstore_size, vec.shape[-1]))
-
-                    dstore_keys[tot:tot+len(vec)] = vec
-                    tot +=  len(vec)
+                dstore_keys[tot:tot+len(vec)] = vec
+                tot +=  len(vec)
 
         assert tot==dstore_size, (tot, dstore_size)
         print ("Finished saving %d vectors at %s" % (tot, embed_path))

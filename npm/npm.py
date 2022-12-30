@@ -38,7 +38,10 @@ class NPM(NPMSingle):
 
         return all_scores, all_indices, knn_ids
 
-    def predict_span(self, query_text, ngram_max, valid_func=None, normalize_separate=True, alphas=[0.0]):
+    def predict_span(self, query_text, ngram_max, valid_func=None,
+                     alphas=[0.0], is_question=False):
+
+        t0 = time.time()
 
         # first, obtain query emb
         inputs = self.model.tokenizer(query_text)
@@ -57,66 +60,76 @@ class NPM(NPMSingle):
         # this is a utility function that finds all possible spans
         # composed with the top k start indices and end indices
         def get_candidates(start_indices, end_indices):
+            consider_string_boundary = self.dstore.consider_string_boundary
+
             start_triples = self.dstore._get_token_position(start_indices.tolist(),
                                                             ngram_after=ngram_max)
             end_triples = self.dstore._get_token_position(end_indices.tolist(),
                                                         ngram_before=ngram_max)
 
-            # cache_valid_candidates
-            for block_idx, _, _ in start_triples[0] + end_triples[0]:
-                if block_idx in self.dstore.cache_valid_candidates:
-                    pass
-                input_ids = self.dstore.blocks[block_idx]["input_ids"]
-                tokens = [self.model.tokenizer._decode(_id) for _id in input_ids]
-                valid_start, valid_end = set(), set()
-                for token_idx, token in enumerate(tokens):
-                    if token_idx==0 or token.startswith(" "):
-                        valid_start.add(token_idx)
-                    elif token_idx>0 and np.any([tokens[token_idx-1].endswith(punc) for punc in string.punctuation]):
-                        valid_start.add(token_idx)
-                    if token_idx==len(tokens)-1 or tokens[token_idx+1].startswith(" ") or \
-                            np.any([tokens[token_idx+1].startswith(punc) for punc in string.punctuation]):
-                        valid_end.add(token_idx)
-                self.dstore.cache_valid_candidates[block_idx] = {"valid_start": valid_start, "valid_end": valid_end}
-
             all_start_indices = set()
             all_end_indices = set()
             all_start_and_end = set()
+
             for (block_idx, token_indices, vocabs), start_token_idx in zip(start_triples[0], start_indices[0]):
-                if token_indices[0] not in self.dstore.cache_valid_candidates[block_idx]["valid_start"]:
+
+                if consider_string_boundary and token_indices[0] not in self.dstore.orig_block_idx_to_valid_start[block_idx]:
                     continue
                 all_start_indices.add(start_token_idx)
+                end_token_idx = start_token_idx
+
                 for j in range(len(token_indices)):
-                    if token_indices[j] not in self.dstore.cache_valid_candidates[block_idx]["valid_end"]:
+
+                    is_valid_start = token_indices[j] in self.dstore.orig_block_idx_to_valid_start[block_idx]
+                    is_valid_end = token_indices[j] in self.dstore.orig_block_idx_to_valid_end[block_idx]
+
+                    if self.dstore.embs_consider_boundary and not (is_valid_start or is_valid_end):
                         continue
-                    ngram = vocabs[:j+1]
-                    ngram_pos = (start_token_idx, start_token_idx+j)
-                    assert len(ngram)==ngram_pos[1]-ngram_pos[0]+1
-                    if valid_func is None or valid_func(ngram):
-                        if ngram_pos in pos2ngram:
-                            assert pos2ngram[ngram_pos]==ngram
-                        else:
-                            pos2ngram[ngram_pos] = ngram
-                        all_end_indices.add(start_token_idx+j)
-                        all_start_and_end.add(ngram_pos)
+
+                    if (not consider_string_boundary) or is_valid_end:
+                        ngram = vocabs[:j+1]
+                        ngram_pos = (start_token_idx, end_token_idx)
+                        # ngram_pos = (block_idx, token_indices[0], token_indices[0]+j)
+                        # assert len(ngram)==ngram_pos[1][1]-ngram_pos[1][0]+1
+                        if valid_func is None or valid_func(ngram):
+                            if ngram_pos in pos2ngram:
+                                assert pos2ngram[ngram_pos]==ngram
+                            else:
+                                pos2ngram[ngram_pos] = ngram
+                            all_end_indices.add(end_token_idx)
+                            all_start_and_end.add(ngram_pos)
+
+                    end_token_idx += 1
 
             for (block_idx, token_indices, vocabs), end_token_idx in zip(end_triples[0], end_indices[0]):
-                if token_indices[-1] not in self.dstore.cache_valid_candidates[block_idx]["valid_end"]:
+
+                if consider_string_boundary and token_indices[-1] not in self.dstore.orig_block_idx_to_valid_end[block_idx]:
                     continue
                 all_end_indices.add(end_token_idx)
+                start_token_idx = end_token_idx
+
                 for j in range(len(token_indices)):
-                    if token_indices[-j-1] not in self.dstore.cache_valid_candidates[block_idx]["valid_start"]:
+
+                    is_valid_start = token_indices[-j-1] in self.dstore.orig_block_idx_to_valid_start[block_idx]
+                    is_valid_end = token_indices[-j-1] in self.dstore.orig_block_idx_to_valid_end[block_idx]
+
+                    if self.dstore.embs_consider_boundary and not (is_valid_start or is_valid_end):
                         continue
-                    ngram = vocabs[-j-1:]
-                    ngram_pos = (end_token_idx-j, end_token_idx)
-                    assert len(ngram)==ngram_pos[1]-ngram_pos[0]+1
-                    if valid_func is None or valid_func(ngram):
-                        if ngram_pos in pos2ngram:
-                            assert pos2ngram[ngram_pos]==ngram
-                        else:
-                            pos2ngram[ngram_pos] = ngram
-                        all_start_indices.add(end_token_idx-j)
-                        all_start_and_end.add(ngram_pos)
+
+                    if (not consider_string_boundary) or is_valid_start:
+                        ngram = vocabs[-j-1:]
+                        ngram_pos = (start_token_idx, end_token_idx)
+                        # ngram_pos = (block_idx, token_indices[-1]-j, token_indices[-1])
+                        # assert len(ngram)==ngram_pos[1][1]-ngram_pos[1][0]+1
+                        if valid_func is None or valid_func(ngram):
+                            if ngram_pos in pos2ngram:
+                                assert pos2ngram[ngram_pos]==ngram
+                            else:
+                                pos2ngram[ngram_pos] = ngram
+                            all_start_indices.add(start_token_idx)
+                            all_start_and_end.add(ngram_pos)
+
+                    start_token_idx -= 1
 
             return all_start_indices, all_end_indices, all_start_and_end
 
@@ -133,21 +146,26 @@ class NPM(NPMSingle):
 
             return start_scores, end_scores
 
+        t1 = time.time()
+
         # main code starts from here
         if self.dstore.restricted:
             # find passaages to restricted
             if query_text in self.dstore.restricted_dict:
                 block_ids = self.dstore.restricted_dict[query_text]
             else:
-                block_ids = self.dstore.searcher.search(query_text)
+                block_ids = self.dstore.searcher.search(query_text, is_question=is_question)
                 self.dstore.restricted_dict[query_text] = block_ids
-            block_ids = set(block_ids)
+
+            #valid_idxs = [v for block_id in block_ids
+            #              for v in self.dstore.orig_block_idx_to_emb_token_idx[block_id]]
             valid_idxs = []
-            for k, v in self.dstore.emb_token_idx_to_orig_block_idx.items():
-                if v in block_ids:
-                    valid_idxs.append(k)
+            for block_id in block_ids:
+                start, end = self.dstore.orig_block_idx_to_emb_token_idx[block_id:block_id+2]
+                valid_idxs += list(range(start, end))
             start_indices = np.array([valid_idxs])
             end_indices = np.array([valid_idxs])
+
         else:
             _, start_indices = self.dstore.search(start_query, k=self.k)
             _, end_indices = self.dstore.search(end_query, k=self.k)
@@ -156,6 +174,8 @@ class NPM(NPMSingle):
             for alpha in alphas:
                 predictions["a={}".format(alpha)] = None
             return predictions
+
+        t2 = time.time()
 
         if self.dstore.restricted:
             start_scores, end_scores = get_scores(start_indices, end_indices)
@@ -174,24 +194,26 @@ class NPM(NPMSingle):
 
             all_start_scores, all_end_scores = get_scores(all_start_indices, all_end_indices)
 
-        if normalize_separate:
-            all_start_scores = softmax(all_start_scores / self.temperature, -1)
-            all_end_scores = softmax(all_end_scores / self.temperature, -1)
+        all_start_scores = softmax(all_start_scores / self.temperature, -1)
+        all_end_scores = softmax(all_end_scores / self.temperature, -1)
 
-        idx2start_score = {start_token_idx: score
-                            for start_token_idx, score
-                            in zip(all_start_indices, all_start_scores)}
-        idx2end_score = {end_token_idx: score
-                            for end_token_idx, score
-                            in zip(all_end_indices, all_end_scores)}
+        idx2start_score = {start_token_idx: score for start_token_idx, score
+                           in zip(all_start_indices, all_start_scores)}
+        idx2end_score = {end_token_idx: score for end_token_idx, score
+                         in zip(all_end_indices, all_end_scores)}
 
         pos2score = {}
         ngram2score = defaultdict(list)
 
+        t3 = time.time()
+
         # now, assign scores to possible ngrams
         for (start, end) in all_start_and_end:
-            assert start in idx2start_score
-            assert end in idx2end_score
+            try:
+                assert start in idx2start_score
+                assert end in idx2end_score
+            except Exception:
+                from IPython import embed; embed(); exit()
             score = idx2start_score[start] + idx2end_score[end]
 
             pos2score[(start, end)] = score
@@ -204,8 +226,7 @@ class NPM(NPMSingle):
 
         assert len(pos2score)>0 and len(ngram2score)>0
 
-        if not normalize_separate:
-            ngram2score = {k: np.exp(v) for k, v in ngram2score.items()}
+        t4 = time.time()
 
         for alpha in alphas:
             def key_func(x, alpha=alpha):
@@ -215,6 +236,8 @@ class NPM(NPMSingle):
             top1_ngram = list(top1_ngram_score_pair[0])
 
             predictions["a={}".format(alpha)] = top1_ngram
+
+        t5 = time.time()
 
         return predictions
 
@@ -246,9 +269,10 @@ class NPM(NPMSingle):
                 ex["input"],
                 ngram_max=ngram_max,
                 valid_func=valid_func,
-                alphas=alphas
+                alphas=alphas,
+                is_question=task.is_question,
             )
-            dic = {k: self.decode(v) for k, v in dic.items()}
+            dic = {k: '' if v is None else self.decode(v) for k, v in dic.items()}
             all_predictions.append(dic)
 
         # compute accuracy

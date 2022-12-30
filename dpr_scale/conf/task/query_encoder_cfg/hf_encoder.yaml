@@ -1,5 +1,5 @@
 # @package _group_
 _target_: dpr_scale.models.hf_encoder.Encoder
-model_path: gpt2-large
-initialize: false
+model_path: roberta-large
+initialize: true
 dropout: 0.1

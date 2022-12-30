@@ -170,7 +170,7 @@ class NPMSingle(object):
     def get_stopword_mask(self, name="stopwords", stopwords=set()):
         mask = np.zeros((self.n_vocabs, ))
         stopwords = set()
-        with open("data/roberta_" + name + ".txt") as f:
+        with open("config/roberta_" + name + ".txt") as f:
             for line in f:
                 stopwords.add(int(line.strip()))
         mask[np.array(list(stopwords))] = -1e10

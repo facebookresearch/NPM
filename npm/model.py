@@ -5,29 +5,26 @@
 # LICENSE file in the root directory of this source tree.
 import os
 import torch
-from transformers import RobertaConfig, RobertaForMaskedLM, RobertaTokenizer
-
-default_npm_single_path = "save/npm-single/model.ckpt"
-default_npm_path = "save/npm/model.ckpt"
+from transformers import AutoModelForMaskedLM, AutoTokenizer
 
 class SingleModel(object):
 
     def __init__(self, checkpoint_path):
-        self.tokenizer = RobertaTokenizer.from_pretrained("roberta-large")
+        if checkpoint_path in ["npm", "npm-single"]:
+            checkpoint_path = "facebook/" + checkpoint_path
 
-        if checkpoint_path=="npm":
-            checkpoint_path = default_npm_single_path
-        elif checkpoint_path=="npm-single":
-            checkpoint_path = default_npm_path
+        is_registered = checkpoint_path.startswith("roberta-") or checkpoint_path.startswith("facebook/")
 
-        if checkpoint_path.startswith("roberta"):
-            self.model = RobertaForMaskedLM.from_pretrained(checkpoint_path)
+        if is_registered:
+            self.tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
+            self.model = AutoModelForMaskedLM.from_pretrained(checkpoint_path)
         else:
+            self.tokenizer = AutoTokenizer.from_pretrained("facebook/npm")
             state_dict = torch.load(checkpoint_path)
             if "state_dict" in state_dict:
                 state_dict = state_dict["state_dict"]
             encoder_state_dict = {".".join(k.split(".")[2:]): v for k, v in state_dict.items()}
-            self.model = RobertaForMaskedLM.from_pretrained("roberta-large", state_dict=encoder_state_dict)
+            self.model = AutoModelForMaskedLM.from_pretrained("facebook/npm", state_dict=encoder_state_dict)
 
         self.model.cuda()
         self.model.eval()
@@ -63,8 +60,5 @@ class Model(SingleModel):
         self.cnt += 1
 
         return logits, (start_query, end_query)
-
-
-
 
 

@@ -11,11 +11,24 @@ import torch
 import faiss
 import time
 import glob
+import pickle as pkl
 
 from tqdm import tqdm
 from scipy.special import log_softmax
 
 from collections import defaultdict, Counter
+
+#import tracemalloc
+import os
+import psutil
+# tracemalloc.start()
+pid = os.getpid()
+python_process = psutil.Process(pid)
+
+def print_mem_use():
+    #memUse = tracemalloc.get_traced_memory()[1]/(1024*1024*1024)
+    memUse = python_process.memory_info()[0]/2.**30  # memory use in GB...I think
+    print('memory use: %.1fGB' % memUse)
 
 def load_embs(embed_path, dstore_size, dimension):
     assert os.path.exists(embed_path), embed_path
@@ -39,22 +52,25 @@ class DataStore(object):
                  num_keys_to_add_at_a_time=1000000,
                  remove_stopwords=False,
                  restricted=None,
+                 consider_string_boundary=True,
                  cuda=True,
+                 embs_consider_boundary=False,
+                 keep_uint8=False
                  ):
 
         base_dir = "corpus"
         if setting in ["enwiki-0", "enwiki-2022-0"]:
-            data_path = os.path.join(base_dir, setting[:-2], "0.jsonl")
+            data_path = os.path.join(base_dir, setting[:-2], "0.npy")
             if model_dir is not None:
                 model_dir = os.path.join(model_dir, setting)
         elif setting in ["enwiki", "enwiki-2022"]:
-            assert remove_stopwords
-            data_path=[os.path.join(base_dir, setting, "{}.jsonl".format(idx)) for idx in range(20)]
+            assert remove_stopwords, remove_stopwords
+            data_path=[os.path.join(base_dir, setting, "{}.npy".format(idx)) for idx in range(20)]
             if model_dir is not None:
                 model_dir=[os.path.join(model_dir, "{}-{}".format(setting, idx)) for idx in range(20)]
                 ncentroids *= 8
         elif setting in ["cc_news", "imdb", "amazon", "subj"]:
-            data_path = os.path.join(base_dir, setting, "text.jsonl")
+            data_path = os.path.join(base_dir, setting, "text.npy")
             if model_dir is not None:
                 model_dir = os.path.join(model_dir, setting)
         else:
@@ -68,9 +84,10 @@ class DataStore(object):
         self.num_keys_to_add_at_a_time = num_keys_to_add_at_a_time
         self.remove_stopwords = remove_stopwords
         self.restricted = restricted
+        self.consider_string_boundary = consider_string_boundary
         self.cuda = cuda
-
-        self.cache_valid_candidates = {}
+        self.embs_consider_boundary = embs_consider_boundary
+        self.keep_uint8 = keep_uint8
 
         '''
         restricted can be either
@@ -90,13 +107,20 @@ class DataStore(object):
             self.searcher = BM25Searcher(data_dir, index_dir)
             self.restricted, self.restricted_dict = self.searcher.batch_search(self.restricted)
 
+        self.load_restricted = self.restricted and type(self.restricted)!=bool
+        print ("load_restricted:", self.load_restricted)
+
         if do_load_data:
             self.load_data(data_path)
+
+        print_mem_use()
 
         if do_load_embeds:
             assert model_dir is not None
             assert do_load_data
             self.load_embeds(model_dir)
+
+        print_mem_use()
 
         if do_load_index:
             assert model_dir is not None
@@ -114,10 +138,15 @@ class DataStore(object):
         return stopwords
 
     def load_data(self, data_path):
-        self.blocks = []
-        self.token_idx_to_block_idx = {}
-        self.emb_token_idx_to_orig_block_idx = {}
-        self.orig_emb_token_indices_valid = set()
+        self.input_ids = []
+        self.token_idx_to_block_idx = []
+        self.token_idx_to_local_idx = []
+        self.emb_token_idx_to_orig_block_idx = []
+        self.orig_block_idx_to_emb_token_idx = []
+
+        # for debugging, later we can delete this
+        self.orig_block_idx_to_valid_start = {}
+        self.orig_block_idx_to_valid_end = {}
 
         stopwords = self.load_stopwords()
         dstore_size_list = []
@@ -131,63 +160,78 @@ class DataStore(object):
         global_dstore_size = 0
         global_true_dstore_size = 0
         true_dstore_size_list = []
+
+        if self.load_restricted:
+            self.orig_emb_token_indices_valid = set()
+
+        print_mem_use()
+
         for data_path_idx, _data_path in enumerate(data_paths):
-            assert os.path.exists(_data_path), _data_path
+            input_ids = np.load(_data_path)
+
+            start_end_pairs = np.load(_data_path.replace(".npy", "_blocks.npy"))
+            if self.consider_string_boundary:
+                with open(_data_path.replace(".npy", "_valid.pkl"), "rb") as f:
+                    valid_candidates = pkl.load(f)
+
             dstore_size = 0
             true_dstore_size = 0
-            with open(_data_path, "r") as f:
-                n_lines = np.sum([1 for _ in f])
+            offset_block = 0 if self.input_ids is None else len(self.input_ids)
 
-            with open(_data_path, "r") as f:
-                for line in tqdm(f, total=n_lines):
-                    if self.restricted and type(self.restricted)==list:
-                        is_valid = offset in self.restricted
-                    else:
-                        is_valid = True
-                    curr_dstore_size = self.parse_line(line,
-                                                       stopwords,
-                                                       return_dstore_size_only=self.restricted and not is_valid)
-                    if not self.restricted or  (self.restricted and is_valid):
-                        for i in range(curr_dstore_size):
-                            self.emb_token_idx_to_orig_block_idx[global_true_dstore_size+i] = offset
-                            self.orig_emb_token_indices_valid.add(global_dstore_size+i)
-                    dstore_size += curr_dstore_size
-                    global_dstore_size += curr_dstore_size
+            for block_idx, (valid_start, valid_end) in enumerate(tqdm(valid_candidates)):
+                start = start_end_pairs[block_idx]
+                end = start_end_pairs[block_idx+1] if block_idx<len(start_end_pairs)-1 else len(input_ids)
+                curr_input_ids = input_ids[start:end]
+                if not self.keep_uint8:
+                    curr_input_ids = curr_input_ids.tolist()
+                is_valid = (not self.load_restricted) or offset in self.restricted
+                valid_idxs = set(valid_start) | set(valid_end)
+                curr_dstore_size = 0
+
+                for i, curr_token in enumerate(curr_input_ids):
+                    if self.remove_stopwords and curr_token in stopwords:
+                        continue
+                    if self.embs_consider_boundary and i not in valid_idxs:
+                        continue
+                    elif curr_token in [0, 2]:
+                        continue
                     if is_valid:
-                        true_dstore_size += curr_dstore_size
-                        global_true_dstore_size += curr_dstore_size
-                    offset += 1
+                        self.token_idx_to_block_idx.append(len(self.input_ids))
+                        self.token_idx_to_local_idx.append(i)
+                    curr_dstore_size += 1
+
+                self.orig_block_idx_to_emb_token_idx.append(global_true_dstore_size)
+
+                if is_valid and self.load_restricted:
+                    for j in range(curr_dstore_size):
+                        self.emb_token_idx_to_orig_block_idx.append(offset)
+                        self.orig_emb_token_indices_valid.add(global_dstore_size+j)
+
+                if is_valid and self.consider_string_boundary:
+                    self.orig_block_idx_to_valid_start[offset] = valid_start
+                    self.orig_block_idx_to_valid_end[offset] = valid_end
+
+                dstore_size += curr_dstore_size
+                global_dstore_size += curr_dstore_size
+                if is_valid:
+                    true_dstore_size += curr_dstore_size
+                    global_true_dstore_size += curr_dstore_size
+                self.input_ids.append(curr_input_ids)
+                offset += 1
 
             dstore_size_list.append(dstore_size)
             true_dstore_size_list.append(true_dstore_size)
             print ("Finished reading %.3fM tokens from %s" % (dstore_size/1000000, _data_path))
+            print_mem_use()
 
+        self.orig_block_idx_to_emb_token_idx.append(global_true_dstore_size)
+
+        self.token_idx_to_block_idx = np.array(self.token_idx_to_block_idx)
+        self.token_idx_to_local_idx = np.array(self.token_idx_to_local_idx, dtype=np.uint8)
         self.dstore_size_list = dstore_size_list
         self.dstore_size = np.sum(dstore_size_list)
         self.true_dstore_size_list = true_dstore_size_list
         self.true_dstore_size = np.sum(true_dstore_size_list)
-        assert (self.restricted and type(self.restricted)==list) or self.dstore_size==self.true_dstore_size
-
-    def parse_line(self, line, stopwords, return_dstore_size_only=False):
-        dp = json.loads(line)
-        input_ids = dp["input_ids"][:np.sum(dp["attention_mask"])]
-
-        dstore_size = 0
-        for i, curr_token in enumerate(input_ids):
-            if curr_token in [0, 2]:
-                continue
-            if self.remove_stopwords and curr_token in stopwords:
-                continue
-            if return_dstore_size_only:
-                dstore_size += 1
-                continue
-            self.token_idx_to_block_idx[len(self.token_idx_to_block_idx)] = (len(self.blocks), i)
-            dstore_size += 1
-
-        if not return_dstore_size_only:
-            self.blocks.append({"input_ids": input_ids, "raw_text": dp["contents"]})
-
-        return dstore_size
 
     def load_embeds(self, model_dir):
         postfix = "_wo_stopwords" if self.remove_stopwords else ""
@@ -204,7 +248,7 @@ class DataStore(object):
             print ("Start loading the embed with (%d, %d)..." % (self.dstore_size, self.dimension))
             self.embs = load_embs(embed_path, self.dstore_size, self.dimension)
 
-        if self.restricted and type(self.restricted)==list:
+        if self.load_restricted:
             if type(self.embs)==list:
                 offset = 0
                 for i, (emb, dstore_size) in enumerate(zip(self.embs, self.dstore_size_list)):
@@ -273,8 +317,9 @@ class DataStore(object):
         if type(i)==list:
             return [self.get_context(j, decode_func) for j in i]
 
-        block_i, token_i = self.token_idx_to_block_idx[i]
-        input_ids = self.blocks[block_i]["input_ids"]
+        block_i, token_i = self.token_idx_to_block_idx[i], self.token_idx_to_local_idx[i]
+        input_ids = self.input_ids[block_i]
+        #input_ids = self.blocks[block_i]["input_ids"]
         return decode_func(input_ids, token_i)
 
     def get_frequency(self, tokens):
@@ -337,8 +382,9 @@ class DataStore(object):
         return sorted_tokens, np.log(knn_prob)
 
     def _get_token(self, token_idx):
-        block_i, token_i = self.token_idx_to_block_idx[token_idx]
-        input_ids = self.blocks[block_i]["input_ids"]
+        block_i, token_i = self.token_idx_to_block_idx[token_idx], self.token_idx_to_local_idx
+        #input_ids = self.blocks[block_i]["input_ids"]
+        input_ids = self.input_ids[block_i]
         assert token_i < len(input_ids)
         token_i = input_ids[token_i]
         return block_i, token_i
@@ -349,8 +395,9 @@ class DataStore(object):
                                              ngram_before=ngram_before,
                                              ngram_after=ngram_after)
                     for _token_idx in token_idx]
-        block_i, token_i = self.token_idx_to_block_idx[token_idx]
-        input_ids = self.blocks[block_i]["input_ids"]
+        block_i, token_i = self.token_idx_to_block_idx[token_idx], self.token_idx_to_local_idx[token_idx]
+        #input_ids = self.blocks[block_i]["input_ids"]
+        input_ids = self.input_ids[block_i]
         assert token_i < len(input_ids)
 
         if ngram_before==1:

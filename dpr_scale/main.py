@@ -21,24 +21,6 @@ For debugging Hydra:
 $ HYDRA_FULL_ERROR=1 buck run //deeplearning/projects/dpr-scale:main -- --info
 """
 
-
-def cnt_files(path):
-    import glob
-    import subprocess
-    BASE_DIR = "/checkpoint/sewonmin/data/preprocess_data"
-    def _append_base_dir(path):
-        if not path.startswith("/"):
-            path = os.path.join(BASE_DIR, path)
-        return path
-
-    print ("counting files...")
-    paths = [_append_base_dir(_path) for path in path.split("+")
-                for _path in glob.glob(_append_base_dir(path))]
-    for _path in paths:
-        #cnt = int(subprocess.check_output("wc -l " + _path, shell=True).split()[0])
-        #print ("%s\t\t%d" % (_path, cnt))
-        print (_path)
-
 @hydra.main(config_path="conf", config_name="config")
 def main(cfg: MainConfig):
     print(OmegaConf.to_yaml(cfg))
@@ -53,7 +35,7 @@ def main(cfg: MainConfig):
 
             task = hydra.utils.instantiate(cfg.task, _recursive_=False)
             transform = hydra.utils.instantiate(cfg.task.transform)
-            datamodule = hydra.utils.instantiate(cfg.datamodule, transform=transform)
+            datamodule = hydra.utils.instantiate(cfg.datamodule) #, transform=transform)
             checkpoint_callback = hydra.utils.instantiate(cfg.checkpoint_callback)
             lr_monitor = LearningRateMonitor(logging_interval='step')
             trainer = Trainer(**cfg.trainer, callbacks=[checkpoint_callback, lr_monitor])
@@ -76,27 +58,11 @@ def main(cfg: MainConfig):
             do_test(ckpt_path)
 
     else:
-        if cfg.trainer.num_nodes>1 and not cfg.task.shared_model:
-            checkpoint = os.path.join(
-                "/checkpoint/sewonmin/hydra_outputs/lm_l_v3/init-false_BS-192_LR-1e-03",
-                "0/lightning_logs/version_63863415/checkpoints",
-                "latest-50000.ckpt")
-            assert os.path.exists(checkpoint), checkpoint
-            print ("Starting from %s" % str(checkpoint))
-            cfg.task.query_encoder_cfg.model_path = checkpoint
-
-            # cfg.task.optim.lr =  cfg.task.optim.lr / 10
-            # print ("learning_rate", cfg.task.optim.lr)
-
-        if cfg.datamodule.masking_ratio==0.4:
-            print ("contrastive_negative_selection=half")
-            cfg.task.contrastive_negative_selection="half"
-
         task = hydra.utils.instantiate(cfg.task, _recursive_=False)
 
         #assert cfg.task.model.model_path == cfg.task.transform.model_path
         transform = None #hydra.utils.instantiate(cfg.task.transform)
-        datamodule = hydra.utils.instantiate(cfg.datamodule, transform=transform)
+        datamodule = hydra.utils.instantiate(cfg.datamodule) #, transform=transform)
         checkpoint_callback = hydra.utils.instantiate(cfg.checkpoint_callback)
         lr_monitor = LearningRateMonitor(logging_interval='step')
         trainer = Trainer(**cfg.trainer, callbacks=[checkpoint_callback, lr_monitor])

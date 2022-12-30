@@ -19,9 +19,9 @@ from dpr_scale.utils.utils import (
 )
 from pytorch_lightning import LightningDataModule
 
-from dpr_scale.datamodule.utils import MemoryMappedDataset
+from dpr_scale.datamodule.utils import CorpusDataset
 
-class LanguageModelingJsonlDataModule(LightningDataModule):
+class CorpusDataModule(LightningDataModule):
     def __init__(
         self,
         train_path: str,
@@ -30,52 +30,28 @@ class LanguageModelingJsonlDataModule(LightningDataModule):
         batch_size: int = 2,
         val_batch_size: int = 0,  # defaults to batch_size
         test_batch_size: int = 0,  # defaults to val_batch_size
-        bidirectional: bool = True,
-        masking: str = None,
-        masking_ratio: float = 0.0,
-        enforce_masking_positives: bool = False,
-        num_workers: int = 0,  # increasing this bugs out right now
-        max_cnt: int = -1,
     ):
         super().__init__()
         self.batch_size = batch_size
+        self.num_workers = 1
         self.val_batch_size = val_batch_size if val_batch_size else batch_size
         self.test_batch_size = (
             test_batch_size if test_batch_size else self.val_batch_size
         )
 
-        _path = train_path if train_path is not None else test_path
-
-        self.dpr_transform = LanguageModelingTransform(
-            bidirectional=bidirectional,
-            masking=masking,
-            masking_ratio=masking_ratio,
-            enforce_masking_positives=enforce_masking_positives
-        )
-        self.num_workers = num_workers
         self.datasets = {
-            "train": MemoryMappedDataset(train_path, max_cnt=max_cnt),
-            "valid": MemoryMappedDataset(val_path, max_cnt=max_cnt),
-            "test": MemoryMappedDataset(test_path, max_cnt=max_cnt),
+            "train": CorpusDataset(train_path),
+            "valid": CorpusDataset(val_path),
+            "test": CorpusDataset(test_path),
         }
 
     def train_dataloader(self):
-        sampler = None
-        if (
-            self.trainer
-            and hasattr(self.trainer, "world_size")
-            and self.trainer.world_size > 1
-        ):
-            sampler = ContiguousDistributedSampler(
-                self.datasets["train"], num_replicas_per_node=self.trainer.gpus
-            )
-
         return torch.utils.data.DataLoader(
             self.datasets["train"],
+            shuffle=False,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            collate_fn=self.collate_train,
-            sampler=sampler,
+            collate_fn=self.collate_eval,
         )
 
     def val_dataloader(self):
@@ -106,6 +82,9 @@ class LanguageModelingJsonlDataModule(LightningDataModule):
         return self.collate(batch, "train")
 
     def collate(self, batch, stage):
-        #print ("datamodule collate called")
-        return self.dpr_transform(batch, stage)
+        return {"input_ids": torch.LongTensor([b["input_ids"] for b in batch]),
+                "attention_mask": torch.LongTensor([b["attention_mask"] for b in batch]),
+                "is_valid": torch.LongTensor([b["is_valid"] for b in batch]),
+                }
+
 

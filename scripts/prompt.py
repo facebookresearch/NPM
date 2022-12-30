@@ -19,7 +19,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--eval_dataset', type=str, default="all")
     parser.add_argument('--corpus_data', type=str, default=None)
-    parser.add_argument('--checkpoint_path', type=str, default="roberta-large")
+    parser.add_argument('--checkpoint_path', type=str, default="npm")
     parser.add_argument('--save_dir', type=str, default="save")
 
     parser.add_argument('--k', type=int, default=4096)
@@ -31,12 +31,20 @@ def main():
     parser.add_argument("--open", action="store_true")
     parser.add_argument("--restricted", action="store_true")
 
+    # for ablations
+    parser.add_argument("--load_all_embs", action="store_true", default=True)
+    parser.add_argument("--embs_consider_boundary", action="store_true", default=True)
+    parser.add_argument("--keep_uint8", action="store_true")
+    parser.add_argument("--debug", action="store_true")
+
     args = parser.parse_args()
     print (args)
 
-    if args.restricted:
-        assert "+" not in args.eval_dataset
-        task = Task(args.eval_dataset, "data", n_samples=args.n_samples)
+    if args.restricted and not args.load_all_embs:
+        tasks = []
+        for eval_dataset in args.eval_dataset.split("+"):
+            task = Task(eval_dataset, "data", n_samples=args.n_samples)
+            tasks.append(task)
 
     start_time = time.time()
 
@@ -48,7 +56,9 @@ def main():
                               model_dir=os.path.join(args.save_dir, "dstore"),
                               do_load_index=not args.restricted,
                               remove_stopwords=args.remove_stopwords,
-                              restricted=task if args.restricted else None,
+                              restricted=(True if args.load_all_embs else tasks) if args.restricted else None,
+                              embs_consider_boundary=args.embs_consider_boundary,
+                              keep_uint8=args.keep_uint8
                               )
         print ("Finish loading the datastore (%dsec)" % (time.time()-start_time))
 
@@ -66,11 +76,44 @@ def main():
         return
 
     npm_class = NPMSingle if args.single else NPM
-    npm = npm_class(model=model, dstore=dstore, k=args.k, temperature=args.temperature)
-    for eval_dataset in args.eval_dataset.split("+"):
+    npm = npm_class(model=model,
+                    dstore=dstore,
+                    k=args.k,
+                    temperature=args.temperature)
+
+    for dataset_idx, eval_dataset in enumerate(args.eval_dataset.split("+")):
         # loading the task data
-        if not args.restricted:
+        if args.restricted and not args.load_all_embs:
+            task = tasks[dataset_idx]
+        else:
             task = Task(eval_dataset, "data", n_samples=args.n_samples)
+
+        if args.debug:
+            import numpy as np
+            from task.utils_eval import normalize_answer
+
+            # evaluate on a subset of examples where BM25 is successful.
+            if args.load_all_embs:
+                _, restricted_dict = dstore.searcher.batch_search(task)
+            else:
+                restricted_dict = dstore.restricted_dict
+            psg_id_to_raw_text = {}
+            for psgs in restricted_dict.values():
+                for psg in psgs:
+                    if psg not in psg_id_to_raw_text:
+                        psg_id_to_raw_text[psg] = normalize_answer(npm.decode(dstore.input_ids[psg]))
+
+            included = []
+            for i, ex in enumerate(task.examples):
+                psgs = restricted_dict[ex["input"]]
+                psgs = [psg_id_to_raw_text[psg] for psg in psgs]
+                answers = [normalize_answer(answer) for answer in ex["answers"]]
+                if np.any([answer in psg for answer in answers for psg in psgs]):
+                    included.append(i)
+            print ("Evaluating %d->%d examples..." % (len(task.examples), len(included)))
+            task.examples = [task.examples[i] for i in included]
+            if task.ngrams is not None:
+                task.ngrams = [task.ngrams[i] for i in included]
 
         save_dir = os.path.join(args.save_dir, "results")
         if not os.path.exists(save_dir):

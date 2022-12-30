@@ -186,7 +186,7 @@ def main():
                         default=None)
     parser.add_argument("--save_dir",
                         type=str,
-                        default="save/clm")
+                        default="save")
     parser.add_argument("--ret", type=str, default=None)
     parser.add_argument("--max_sequence_length", type=int, default=1024)
     parser.add_argument("--eval_only", action="store_true")
@@ -197,8 +197,8 @@ def main():
     print ("Took %dsec to load the data" % (time.time()-start_time))
 
     prediction_path = os.path.join(args.save_dir,
-                                   "{}{}{}.jsonl".format(args.eval_dataset,
-                                                         args.model_name,
+                                   args.model_name,
+                                   "{}{}.jsonl".format(args.eval_dataset,
                                                          "" if args.ret is None else "_" + args.ret)
                                    )
 
@@ -208,8 +208,9 @@ def main():
         predictions = model.generate(inputs, max_sequence_length=args.max_sequence_length)
         print ("Took %dsec to generate" % (time.time()-start_time))
 
-        if not os.path.exists(args.save_dir):
-            os.mkdir(args.save_dir)
+        if not os.path.exists(os.path.join(args.save_dir, args.model_name)):
+            os.makedirs(os.path.join(args.save_dir, args.model_name))
+
         with open(prediction_path, "w") as f:
             for prediction in predictions:
                 f.write(json.dumps({"prediction": prediction}) + "\n")

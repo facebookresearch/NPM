@@ -47,20 +47,6 @@ class LanguageModelingTransform(nn.Module):
             self.eos_id = roberta_tokenizer.eos_token_id
             self.pad_id = roberta_tokenizer.pad_token_id
 
-            if self.preprocessed_tokenizer_type=="gpt":
-                # find a mapping from gpt2_id to roberta_id
-                from transformers import GPT2Tokenizer
-                gpt2_tokenizer = GPT2Tokenizer.from_pretrained("gpt2-large")
-
-                id2vocab_gpt2 = {idx: gpt2_tokenizer._decode(idx) for idx in range(len(gpt2_tokenizer))}
-                vocab2id_roberta = {roberta_tokenizer._decode(idx): idx for idx in range(len(roberta_tokenizer))}
-
-                self.gpt_id_to_roberta_id = {}
-                for id, vocab in id2vocab_gpt2.items():
-                    self.gpt_id_to_roberta_id[id] = vocab2id_roberta[vocab]
-
-                print ("Finish loading gpt_id_to_roberta_id")
-
             if masking is not None:
                 assert masking in ["uniform", "span", "span-merge", "span-merge-two"]
                 assert masking_ratio > 0
@@ -114,47 +100,7 @@ class LanguageModelingTransform(nn.Module):
                     masked_input_ids.append(token)
                     label_mask.append(0)
         else:
-            length = len(tokens)
-
-            if add_bos_id:
-                new_input_ids.append(self.bos_id)
-                masked_input_ids.append(self.bos_id)
-                new_attention_mask.append(1)
-                label_mask.append(0)
-                length += 1
-
-            # np.random.seed(2022) # for debugging
-
-            for i, (token, mask) in enumerate(zip(tokens, attention_mask)):
-                assert type(token)==type(mask)==int
-                if mask:
-                    new_input_ids.append(self.gpt_id_to_roberta_id[token])
-                    if self.masking=="uniform" and np.random.random()<self.masking_ratio:
-                        masked_input_ids.append(self.get_mask_id(token))
-                        label_mask.append(1)
-                    else:
-                        masked_input_ids.append(self.gpt_id_to_roberta_id[token])
-                        label_mask.append(0)
-                    new_attention_mask.append(1)
-                else:
-                    break
-
-            # make sure at least one token has a mask
-            if new_input_ids==masked_input_ids:
-                masked_input_ids[np.random.choice(range(len(masked_input_ids)))] = self.mask_id
-
-            if add_eos_id:
-                new_input_ids.append(self.eos_id)
-                masked_input_ids.append(self.eos_id)
-                new_attention_mask.append(1)
-                label_mask.append(0)
-                length += 1
-
-            while len(new_input_ids)==len(masked_input_ids)==len(new_attention_mask) < length:
-                new_input_ids.append(self.pad_id)
-                masked_input_ids.append(self.pad_id)
-                new_attention_mask.append(0)
-                label_mask.append(0)
+            raise NotImplementedError()
 
         return new_input_ids, new_attention_mask, masked_input_ids, label_mask
 
@@ -180,7 +126,8 @@ class LanguageModelingTransform(nn.Module):
             elif self.masking=="span":
                 masked_input_ids.append(dp["masked_input_ids"])
 
-        if self.masking in ["span-merge", "span-merge-two"]:
+        # span masking with each span represented with two masks
+        if self.masking=="span-merge":
             assert len(labels)==1, len(labels)
             flatten_labels = [l for _labels in labels[0] for l in _labels]
             L = np.max([len(l) for l in flatten_labels])
@@ -210,57 +157,53 @@ class LanguageModelingTransform(nn.Module):
                 else:
                     assert np.all(masked_attention_mask[0][i])
 
-            if self.masking=="span-merge-two":
-                assert len(masked_input_ids)==len(masked_attention_mask)==1
-                masked_input_ids = masked_input_ids[0]
-                masked_attention_mask = masked_attention_mask[0]
+            assert len(masked_input_ids)==len(masked_attention_mask)==1
+            masked_input_ids = masked_input_ids[0]
+            masked_attention_mask = masked_attention_mask[0]
 
-                _masked_input_ids, _masked_attention_mask = [], []
-                L = len(masked_input_ids[0])
-                for curr_input_ids, curr_attention_mask in zip(masked_input_ids, masked_attention_mask):
-                    offset = 0
-                    mask_cnt = curr_input_ids.count(self.mask_id)
-                    while offset < len(curr_input_ids) and self.mask_id in curr_input_ids[offset:]:
-                        idx = offset + curr_input_ids[offset:].index(self.mask_id)
-                        curr_input_ids = curr_input_ids[:idx] + [self.mask_id, self.mask_id] + curr_input_ids[idx+1:]
-                        offset = idx+2
-                    curr_attention_mask = [1] * mask_cnt + curr_attention_mask
-                    assert mask_cnt*2==curr_input_ids.count(self.mask_id)
-                    assert len(curr_input_ids)==len(curr_attention_mask)==L+mask_cnt
+            _masked_input_ids, _masked_attention_mask = [], []
+            L = len(masked_input_ids[0])
+            for curr_input_ids, curr_attention_mask in zip(masked_input_ids, masked_attention_mask):
+                offset = 0
+                mask_cnt = curr_input_ids.count(self.mask_id)
+                while offset < len(curr_input_ids) and self.mask_id in curr_input_ids[offset:]:
+                    idx = offset + curr_input_ids[offset:].index(self.mask_id)
+                    curr_input_ids = curr_input_ids[:idx] + [self.mask_id, self.mask_id] + curr_input_ids[idx+1:]
+                    offset = idx+2
+                curr_attention_mask = [1] * mask_cnt + curr_attention_mask
+                assert mask_cnt*2==curr_input_ids.count(self.mask_id)
+                assert len(curr_input_ids)==len(curr_attention_mask)==L+mask_cnt
 
-                    if 0 in curr_attention_mask:
-                        l = curr_attention_mask.index(0)
-                        curr_input_ids = curr_input_ids[:l]
-                        curr_attention_mask = curr_attention_mask[:l]
+                if 0 in curr_attention_mask:
+                    l = curr_attention_mask.index(0)
+                    curr_input_ids = curr_input_ids[:l]
+                    curr_attention_mask = curr_attention_mask[:l]
 
-                    _masked_input_ids.append(curr_input_ids)
-                    _masked_attention_mask.append(curr_attention_mask)
+                _masked_input_ids.append(curr_input_ids)
+                _masked_attention_mask.append(curr_attention_mask)
 
-                L = max(
-                    np.max([len(_input_ids) for _input_ids in _masked_input_ids]),
-                    np.max([np.sum(mask) for mask in attention_mask[0]]))
-                assert L<=320 #384
-                L = 320 #384
+            L = max(
+                np.max([len(_input_ids) for _input_ids in _masked_input_ids]),
+                np.max([np.sum(mask) for mask in attention_mask[0]]))
+            assert L<=320 #384
+            L = 320 #384
 
-                input_ids = [
-                    _input_ids[:min(L, np.sum(_attention_mask))] + [0]*max(0, L-np.sum(_attention_mask))
-                    for _input_ids, _attention_mask in zip(input_ids[0], attention_mask[0])
-                ]
-                attention_mask = [
-                    _attention_mask[:min(L, np.sum(_attention_mask))] + [0]*max(0, L-np.sum(_attention_mask))
-                    for _attention_mask in attention_mask[0]
-                ]
-                masked_input_ids = [
-                    _input_ids[:L] + [0]*max(0, L-len(_input_ids))
-                    for _input_ids in _masked_input_ids
-                ]
-                masked_attention_mask = [
-                    _attention_mask[:L] + [0]*max(0, L-len(_attention_mask))
-                    for _attention_mask in _masked_attention_mask
-                ]
-
-            else:
-                assert self.masking=="span-merge"
+            input_ids = [
+                _input_ids[:min(L, np.sum(_attention_mask))] + [0]*max(0, L-np.sum(_attention_mask))
+                for _input_ids, _attention_mask in zip(input_ids[0], attention_mask[0])
+            ]
+            attention_mask = [
+                _attention_mask[:min(L, np.sum(_attention_mask))] + [0]*max(0, L-np.sum(_attention_mask))
+                for _attention_mask in attention_mask[0]
+            ]
+            masked_input_ids = [
+                _input_ids[:L] + [0]*max(0, L-len(_input_ids))
+                for _input_ids in _masked_input_ids
+            ]
+            masked_attention_mask = [
+                _attention_mask[:L] + [0]*max(0, L-len(_attention_mask))
+                for _attention_mask in _masked_attention_mask
+            ]
 
             input_ids = torch.LongTensor(input_ids)
             attention_mask = torch.LongTensor(attention_mask)
@@ -269,10 +212,7 @@ class LanguageModelingTransform(nn.Module):
             labels = torch.LongTensor(flatten_labels)
             label_mask = masked_input_ids==self.mask_id
 
-            if self.masking=="span-merge-two":
-                assert len(flatten_labels)*2==torch.sum(label_mask)
-            else:
-                assert len(flatten_labels)==torch.sum(label_mask)
+            assert len(flatten_labels)*2==torch.sum(label_mask)
 
             return {
                 "input_ids": input_ids,
@@ -283,6 +223,7 @@ class LanguageModelingTransform(nn.Module):
                 "label_mask": label_mask
             }
 
+        # span masking with each token in the span is represented with a mask
         elif self.masking=="span":
             return {
                 "input_ids": torch.LongTensor(input_ids),
