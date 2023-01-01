@@ -9,8 +9,8 @@ This is a guideline for training the NPM model. The training code is largely bas
     * [Span Masking](#span-masking)
     * [Uniform Masking](#uniform-masking)
 2. [Training](#training)
-3. [Debugging locally](#debugging-locally): see this if you want to do a test run before running the entire pipeline.
-
+    * [Debugging locally](#debugging-locally): see this if you want to do a test run before running the entire pipeline.
+3. [Evaluation](#evaluation)
 
 ## Prepare Training Data
 
@@ -94,11 +94,21 @@ To train NPM-single with uniform masking, run
 bash scripts/train.sh {save_dir} false 3e-05 16 0.15 uniform
 ```
 
-## Debugging Locally
+### Debugging Locally
 If you want a training run on a subset of datas with one local GPU (instead of using slurm and hydra), simply run `scripts/train_debug.sh` instead of `scripts/train.sh` with the same arguments as in the [Training section](#training).
 
 This use RoBERTA-base instead of RoBERTa-large, and can work with >=9GB GPU memory.
 
 Note: This only uses the first shard of English Wikipedia (no CC-News), so if you have not started preprocessing and want to do a test run first, you can preprocess English Wikipedia only and keep CC-News later.
+
+## Evaluation
+Evaluation can be done by following the guidelines for inference in the main [README](README.md).
+
+* Checkpoints are saved every 10,000 training steps. You can find them under `{save_dir}/{hyperparam_settings}/0/lightning_logs/version_{slurm_id}/checkpoints`.
+* When saving embeddings, specify `+task.checkpoint_path=${checkpoint_path}`
+* When running `python -m scripts.prompt`, specify `--checkpoint_path ${checkpoint_path}`
+
+
+
 
 

@@ -71,8 +71,7 @@ HYDRA_FULL_ERROR=1 PYTHONPATH=. python dpr_scale/main.py -m \
     trainer.gradient_clip_val=${clip} \
     trainer=slurm \
     hydra.launcher.name=${SAVE_DIR} \
-    hydra.sweep.dir=${SAVE_DIR} \
-    hydra.launcher.partition=devlab
+    hydra.sweep.dir=${SAVE_DIR}
 
 
 

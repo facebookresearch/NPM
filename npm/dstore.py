@@ -51,6 +51,7 @@ class DataStore(object):
                  probe=8,
                  num_keys_to_add_at_a_time=1000000,
                  remove_stopwords=False,
+                 remove_stopwords_except_k=None,
                  restricted=None,
                  consider_string_boundary=True,
                  cuda=True,
@@ -64,7 +65,7 @@ class DataStore(object):
             if model_dir is not None:
                 model_dir = os.path.join(model_dir, setting)
         elif setting in ["enwiki", "enwiki-2022"]:
-            assert remove_stopwords, remove_stopwords
+            assert remove_stopwords or remove_stopwords_except_k
             data_path=[os.path.join(base_dir, setting, "{}.npy".format(idx)) for idx in range(20)]
             if model_dir is not None:
                 model_dir=[os.path.join(model_dir, "{}-{}".format(setting, idx)) for idx in range(20)]
@@ -76,6 +77,8 @@ class DataStore(object):
         else:
             raise NotImplementedError(setting)
 
+        assert not (remove_stopwords and remove_stopwords_except_k)
+
         self.setting = setting
         self.dimension = dimension
         self.ncentroids = ncentroids
@@ -83,6 +86,7 @@ class DataStore(object):
         self.probe = probe
         self.num_keys_to_add_at_a_time = num_keys_to_add_at_a_time
         self.remove_stopwords = remove_stopwords
+        self.remove_stopwords_except_k = remove_stopwords_except_k
         self.restricted = restricted
         self.consider_string_boundary = consider_string_boundary
         self.cuda = cuda
@@ -127,7 +131,7 @@ class DataStore(object):
             self.load_index(model_dir)
 
     def load_stopwords(self):
-        if self.remove_stopwords:
+        if self.remove_stopwords or self.remove_stopwords_except_k:
             stopwords = set()
             stopwords_dir = "/private/home/sewonmin/token-retrieval/task_data"
             with open(os.path.join(stopwords_dir, "roberta_stopwords.txt")) as f:
@@ -178,6 +182,9 @@ class DataStore(object):
             true_dstore_size = 0
             offset_block = 0 if self.input_ids is None else len(self.input_ids)
 
+            remove_stopwords = self.remove_stopwords or (
+                self.remove_stopwords_except_k is not None and data_path_idx >= self.remove_stopwords_except_k)
+
             for block_idx, (valid_start, valid_end) in enumerate(tqdm(valid_candidates)):
                 start = start_end_pairs[block_idx]
                 end = start_end_pairs[block_idx+1] if block_idx<len(start_end_pairs)-1 else len(input_ids)
@@ -189,11 +196,11 @@ class DataStore(object):
                 curr_dstore_size = 0
 
                 for i, curr_token in enumerate(curr_input_ids):
-                    if self.remove_stopwords and curr_token in stopwords:
+                    if remove_stopwords and curr_token in stopwords:
                         continue
                     if self.embs_consider_boundary and i not in valid_idxs:
                         continue
-                    elif curr_token in [0, 2]:
+                    if curr_token in [0, 2]:
                         continue
                     if is_valid:
                         self.token_idx_to_block_idx.append(len(self.input_ids))
@@ -234,16 +241,19 @@ class DataStore(object):
         self.true_dstore_size = np.sum(true_dstore_size_list)
 
     def load_embeds(self, model_dir):
-        postfix = "_wo_stopwords" if self.remove_stopwords else ""
         if type(model_dir)==list:
             self.embs = []
-            for _model_dir, dstore_size in zip(model_dir, self.dstore_size_list):
+            for shard_idx, (_model_dir, dstore_size) in enumerate(zip(model_dir, self.dstore_size_list)):
+                remove_stopwords = self.remove_stopwords or (
+                    self.remove_stopwords_except_k is not None and shard_idx >= self.remove_stopwords_except_k)
+                postfix = "_wo_stopwords" if remove_stopwords else ""
                 embed_path = os.path.join(_model_dir,
                                             "embeddings{}.float16.npy".format(postfix))
                 print ("Start loading the embed from %s with (%d, %d)..." % (embed_path.split("/")[-2], dstore_size, self.dimension))
                 curr_emb = load_embs(embed_path, dstore_size, self.dimension)
                 self.embs.append(curr_emb)
         else:
+            postfix = "_wo_stopwords" if self.remove_stopwords else ""
             embed_path = os.path.join(model_dir, "embeddings{}.float16.npy".format(postfix))
             print ("Start loading the embed with (%d, %d)..." % (self.dstore_size, self.dimension))
             self.embs = load_embs(embed_path, self.dstore_size, self.dimension)

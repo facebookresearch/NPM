@@ -26,6 +26,7 @@ def main():
     parser.add_argument('--temperature', type=float, default=1.0)
     parser.add_argument('--n_samples', type=int, default=3000)
     parser.add_argument("--remove_stopwords", action="store_true")
+    parser.add_argument("--remove_stopwords_except_k", type=int, default=None)
 
     parser.add_argument("--single", action="store_true")
     parser.add_argument("--open", action="store_true")
@@ -56,6 +57,7 @@ def main():
                               model_dir=os.path.join(args.save_dir, "dstore"),
                               do_load_index=not args.restricted,
                               remove_stopwords=args.remove_stopwords,
+                              remove_stopwords_except_k=args.remove_stopwords_except_k,
                               restricted=(True if args.load_all_embs else tasks) if args.restricted else None,
                               embs_consider_boundary=args.embs_consider_boundary,
                               keep_uint8=args.keep_uint8

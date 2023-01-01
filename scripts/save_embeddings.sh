@@ -10,8 +10,9 @@ corpus=$2
 open=$3
 bs=$4
 
-checkpoint_path=$(pwd)/save/${model_name}/model.ckpt
-ctx_embeddings_dir=$(pwd)/save/${model_name}/dstore/${corpus}
+
+out=$(pwd)/save/${model_name}
+ctx_embeddings_dir=${out}/dstore/${corpus}
 
 if [[ $open == "true" ]] ; then
     if [[ $corpus == "enwiki-"* ]] ; then

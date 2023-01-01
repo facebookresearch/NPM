@@ -10,7 +10,7 @@ import torch.nn as nn
 from dpr_scale.utils.utils import PathManager
 
 # @manual=//python/wheel/transformers3:transformers3
-from transformers import AutoModelForMaskedLM, AutoConfig
+from transformers import RobertaForMaskedLM, AutoModelForMaskedLM, AutoConfig
 
 class Encoder(nn.Module):
     def __init__(
@@ -40,7 +40,7 @@ class Encoder(nn.Module):
             self.transformer = AutoModelForMaskedLM.from_pretrained(local_model_path, config=cfg)
             print ("Initializing from", local_model_path)
         else:
-            self.transformer = AutoModelForMaskedLM.from_pretrained(config=cfg)
+            self.transformer = RobertaForMaskedLM(config=cfg)
 
     def forward(self, tokens):
         return self.transformer(**tokens, return_dict=True)

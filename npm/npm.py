@@ -209,11 +209,8 @@ class NPM(NPMSingle):
 
         # now, assign scores to possible ngrams
         for (start, end) in all_start_and_end:
-            try:
-                assert start in idx2start_score
-                assert end in idx2end_score
-            except Exception:
-                from IPython import embed; embed(); exit()
+            assert start in idx2start_score
+            assert end in idx2end_score
             score = idx2start_score[start] + idx2end_score[end]
 
             pos2score[(start, end)] = score
