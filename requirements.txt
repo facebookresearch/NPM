@@ -1,0 +1,14 @@
+hydra-core==1.1.0.dev3
+hydra-submitit-launcher==1.0.1
+pyyaml
+pathos
+torch==1.12.0
+pytorch-lightning==1.6.4
+fairscale==0.4.6
+transformers==4.21.3
+datasets==2.3.2
+tqdm
+prettytable
+pyserini
+faiss-gpu==1.7.2
+gdown

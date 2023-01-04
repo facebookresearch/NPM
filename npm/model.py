@@ -18,13 +18,16 @@ class SingleModel(object):
         if is_registered:
             self.tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
             self.model = AutoModelForMaskedLM.from_pretrained(checkpoint_path)
+            print ("Loaded from HF Hub:", checkpoint_path)
         else:
             self.tokenizer = AutoTokenizer.from_pretrained("facebook/npm")
+            # loading from trained checkpoint
             state_dict = torch.load(checkpoint_path)
             if "state_dict" in state_dict:
                 state_dict = state_dict["state_dict"]
             encoder_state_dict = {".".join(k.split(".")[2:]): v for k, v in state_dict.items()}
             self.model = AutoModelForMaskedLM.from_pretrained("facebook/npm", state_dict=encoder_state_dict)
+            print ("Loaded from a local checkpoint:", checkpoint_path)
 
         self.model.cuda()
         self.model.eval()

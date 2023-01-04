@@ -31,9 +31,11 @@ if [[ $open == "true" ]] ; then
                 datamodule.val_path=null \
                 datamodule.test_path=${data_path} \
                 trainer.num_nodes=1 \
+                trainer.precision=32 \
                 trainer.gpus=1 \
                 task.query_encoder_cfg.model_path=facebook/${model_name} \
                 +task.ctx_embeddings_dir=${ctx_embeddings_dir} \
+                +task.stopwords_dir=$(pwd)/config \
                 +task.task_type="contrastive" \
                 +task.remove_stopwords=true \
                 trainer=slurm \
@@ -66,6 +68,7 @@ else
             datamodule.val_path=null \
             datamodule.test_path=${data_path} \
             trainer.num_nodes=1 \
+            trainer.precision=32 \
             trainer.gpus=1 \
             task.query_encoder_cfg.model_path=facebook/${model_name} \
             +task.ctx_embeddings_dir=${ctx_embeddings_dir} \

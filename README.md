@@ -16,6 +16,8 @@ This repo contains the original implementation of the paper "[Nonparametric Mask
 
 Models are available from Huggingface Hub:hugs:! Check out [**npm**](https://huggingface.co/facebook/npm) (for phrase retrieval) and [**npm-single**](https://huggingface.co/facebook/npm-single) (for token retrieval).
 
+**We are working on a simple demo where you can simply download all the resources and deploy on your machine. Stay tuned!**
+
 ### Updates
 * **01/02/2023**: The code for training is released. See [train.md](train.md) for instructions.
 * **12/22/2022**: The code for inference is released. Stay tuned for the code for training.
@@ -85,8 +87,8 @@ python -m scripts.prompt \
 
 ```bash
 # To run on AGN, Yahoo and RTE:
-bash scripts/save_embeddings.sh npm enwiki-0 false 384
-bash scripts/save_embeddings.sh npm cc_news false 384
+bash scripts/save_embeddings.sh npm enwiki-0 false 320
+bash scripts/save_embeddings.sh npm cc_news false 320
 python -m scripts.prompt \
     --corpus_data enwiki-0+cc_news \
     --checkpoint_path npm \
@@ -95,7 +97,7 @@ python -m scripts.prompt \
     --save_dir save/npm
 
 # To run on Subj:
-bash scripts/save_embeddings.sh npm subj false 384
+bash scripts/save_embeddings.sh npm subj false 320
 python -m scripts.prompt \
     --corpus_data subj \
     --checkpoint_path npm \
@@ -104,8 +106,8 @@ python -m scripts.prompt \
     --save_dir save/npm
 
 # To run on SST-2, MR, RT, CR and Amazon:
-bash scripts/save_embeddings.sh npm imdb false 384
-bash scripts/save_embeddings.sh npm amazon false 384
+bash scripts/save_embeddings.sh npm imdb false 320
+bash scripts/save_embeddings.sh npm amazon false 320
 python -m scripts.prompt \
     --corpus_data imdb+amazon \
     --checkpoint_path npm \
@@ -114,14 +116,19 @@ python -m scripts.prompt \
     --save_dir save/npm
 ```
 
-Note that `scripts/save_embeddings.sh` takes 'model name', 'corpus name', 'whether it is an open-set task' and `batch size` (`384` is good for a 32gb GPU) as arguments. Embeddings are saved under `save/{model_name}/dstore`.
+Note that `scripts/save_embeddings.sh` takes
+- model name (npm or npm-single)
+- corpus name
+- whether it is an open-set task (true or false)
+- batch size (`320` is good for a 32gb GPU; if `trainer.precision=16` is used, `400` is good for a 32gb GPU)
+as arguments. Embeddings are saved under `save/{model_name}/dstore`.
 
 #### NPM Single on closed-set tasks
 
 ```bash
 # To run on AGN, Yahoo and RTE:
-bash scripts/save_embeddings.sh npm-single enwiki-0 false 384
-bash scripts/save_embeddings.sh npm-single cc_news false 384
+bash scripts/save_embeddings.sh npm-single enwiki-0 false 320
+bash scripts/save_embeddings.sh npm-single cc_news false 320
 python -m scripts.prompt \
     --corpus_data enwiki-0+cc_news \
     --checkpoint_path npm-single \
@@ -130,9 +137,8 @@ python -m scripts.prompt \
     --single \
     --save_dir save/npm-single
 
-
 # To run on Subj:
-bash scripts/save_embeddings.sh npm-single subj false 384
+bash scripts/save_embeddings.sh npm-single subj false 320
 python -m scripts.prompt \
     --corpus_data subj \
     --checkpoint_path npm-single \
@@ -142,8 +148,8 @@ python -m scripts.prompt \
     --save_dir save/npm-single
 
 # To run on SST-2, MR, RT, CR and Amazon:
-bash scripts/save_embeddings.sh npm-single imdb false 384
-bash scripts/save_embeddings.sh npm-single amazon false 384
+bash scripts/save_embeddings.sh npm-single imdb false 320
+bash scripts/save_embeddings.sh npm-single amazon false 320
 python -m scripts.prompt \
     --corpus_data imdb+amazon \
     --checkpoint_path npm-single \
@@ -175,7 +181,7 @@ Please note that running open-set tasks requires around 70GB of RAM and 1.4TB of
 ```bash
 # Note that this can be executed in parallel with up to 20 GPUs. In total, it takes about 10 GPU hours and 1.4TB of disk memory.
 for i in {0..19} ; do
-    bash scripts/save_embeddings.sh npm enwiki-${i} true 384
+    bash scripts/save_embeddings.sh npm enwiki-${i} true 320
 done
 
 # Loading the model takes about 40min, and 70GB of RAM (specify `--keep_uint8` to reduce RAM usage to 40GB which increases the model loading time to 60-80min).

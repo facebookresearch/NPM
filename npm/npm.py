@@ -22,6 +22,10 @@ from scipy.special import softmax, log_softmax
 from npm.npm_single import NPMSingle
 from task.utils_eval import normalize_answer
 
+try:
+    from termcolor import colored
+except:
+    pass
 import torch.nn.functional as F
 
 class NPM(NPMSingle):
@@ -39,9 +43,7 @@ class NPM(NPMSingle):
         return all_scores, all_indices, knn_ids
 
     def predict_span(self, query_text, ngram_max, valid_func=None,
-                     alphas=[0.0], is_question=False):
-
-        t0 = time.time()
+                     alphas=[0.0], is_question=False, return_metadata=False):
 
         # first, obtain query emb
         inputs = self.model.tokenizer(query_text)
@@ -146,8 +148,6 @@ class NPM(NPMSingle):
 
             return start_scores, end_scores
 
-        t1 = time.time()
-
         # main code starts from here
         if self.dstore.restricted:
             # find passaages to restricted
@@ -157,8 +157,6 @@ class NPM(NPMSingle):
                 block_ids = self.dstore.searcher.search(query_text, is_question=is_question)
                 self.dstore.restricted_dict[query_text] = block_ids
 
-            #valid_idxs = [v for block_id in block_ids
-            #              for v in self.dstore.orig_block_idx_to_emb_token_idx[block_id]]
             valid_idxs = []
             for block_id in block_ids:
                 start, end = self.dstore.orig_block_idx_to_emb_token_idx[block_id:block_id+2]
@@ -174,8 +172,6 @@ class NPM(NPMSingle):
             for alpha in alphas:
                 predictions["a={}".format(alpha)] = None
             return predictions
-
-        t2 = time.time()
 
         if self.dstore.restricted:
             start_scores, end_scores = get_scores(start_indices, end_indices)
@@ -205,8 +201,6 @@ class NPM(NPMSingle):
         pos2score = {}
         ngram2score = defaultdict(list)
 
-        t3 = time.time()
-
         # now, assign scores to possible ngrams
         for (start, end) in all_start_and_end:
             assert start in idx2start_score
@@ -223,8 +217,6 @@ class NPM(NPMSingle):
 
         assert len(pos2score)>0 and len(ngram2score)>0
 
-        t4 = time.time()
-
         for alpha in alphas:
             def key_func(x, alpha=alpha):
                 return -np.sum(x[1]) * np.power(len(x[0]), alpha)
@@ -234,7 +226,36 @@ class NPM(NPMSingle):
 
             predictions["a={}".format(alpha)] = top1_ngram
 
-        t5 = time.time()
+        if return_metadata:
+            metadata = {"input": query_text}
+            if self.dstore.restricted:
+                metadata["blocks"] = [self.decode(self.dstore.input_ids[block_id]) for block_id in block_ids]
+
+            metadata["pos2score"] = pos2score
+            metadata["pos2ngram"] = pos2ngram
+            metadata["ngram2score"] = ngram2score
+
+            predicted_ngram = predictions["a=0.0"]
+            metadata["predicted"] = self.decode(predicted_ngram)
+            predicted_spans = []
+            for pos, ngram in pos2ngram.items():
+                if ngram==predicted_ngram:
+
+                    block_id_s = self.dstore.token_idx_to_block_idx[pos[0]]
+                    local_id_s = self.dstore.token_idx_to_local_idx[pos[0]]
+                    block_id_e = self.dstore.token_idx_to_block_idx[pos[1]]
+                    local_id_e = self.dstore.token_idx_to_local_idx[pos[1]]
+                    assert block_id_s==block_id_e
+
+                    input_ids = self.dstore.input_ids[block_id_s]
+                    decoded = self.decode(input_ids[:local_id_s]) + \
+                        colored(self.decode(input_ids[local_id_s:local_id_e+1]), "red") + \
+                        self.decode(input_ids[local_id_e+1:])
+
+                    predicted_spans.append((decoded, pos2score[pos]))
+
+            metadata["predicted_spans"] = sorted(predicted_spans, key=lambda x: -x[1])
+            return predictions, metadata
 
         return predictions
 
@@ -252,8 +273,10 @@ class NPM(NPMSingle):
         all_predictions = []
         mask = self.get_stopword_mask()
         do_restricted = self.dstore is not None and self.dstore.restricted is not None
+
         def valid_func(tokens):
             return np.sum(mask[tokens])==0
+
         if "translation" in str(task):
             alphas = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
             ngram_max = 20

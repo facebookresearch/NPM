@@ -105,7 +105,6 @@ class MaskedLanguageModelingTask(LightningModule):
             state_dict = checkpoint_dict["state_dict"] if "state_dict" in checkpoint_dict else checkpoint_dict
             self.starting_global_step = checkpoint_dict["global_step"] if "global_step" in checkpoint_dict else 0
             self.load_state_dict(state_dict)
-
             print(f"Loaded state dict from {self.pretrained_checkpoint_path}")
         else:
             self.starting_global_step = 0
@@ -532,17 +531,20 @@ class MaskedLanguageModelingTask(LightningModule):
 
 class MaskedLanguageModelingEncodingTask(MaskedLanguageModelingTask):
 
-    def __init__(self, ctx_embeddings_dir, checkpoint_path=None, remove_stopwords=False, **kwargs):
+    def __init__(self, ctx_embeddings_dir, checkpoint_path=None, use_half_precision=True,
+                 remove_stopwords=False, stopwords_dir=None, **kwargs):
         super().__init__(**kwargs)
         self.ctx_embeddings_dir = ctx_embeddings_dir
         self.checkpoint_path = checkpoint_path
+        self.use_half_precision = use_half_precision
         pathlib.Path(ctx_embeddings_dir).mkdir(parents=True, exist_ok=True)
 
         self.remove_stopwords = remove_stopwords
 
         if self.remove_stopwords:
             stopwords = set()
-            stopwords_dir = "/".join(self.checkpoint_path.split("/")[:-3]) + "/config"
+            #assert stopwords_dir is not None
+            stopwords_dir = "/private/home/sewonmin/clean-token-retrieval/config"
             with open(os.path.join(stopwords_dir, "roberta_stopwords.txt")) as f:
                 for line in f:
                     stopwords.add(int(line.strip()))
@@ -572,7 +574,7 @@ class MaskedLanguageModelingEncodingTask(MaskedLanguageModelingTask):
 
     def test_epoch_end(self, outputs):
         assert self.global_rank==0
-        use_half_precision = True
+        use_half_precision = self.use_half_precision
 
         if not self.ctx_embeddings_dir:
             self.ctx_embeddings_dir = self.trainer.weights_save_path
@@ -597,7 +599,6 @@ class MaskedLanguageModelingEncodingTask(MaskedLanguageModelingTask):
             for i, hidden_states in enumerate(curr_hidden_states):
                 if not curr_is_valid[i]:
                     continue
-                # if the current word is stopword, we don't have to save it
                 if self.remove_stopwords and curr_input_ids[i] in self.stopwords:
                     continue
                 vec.append(hidden_states)

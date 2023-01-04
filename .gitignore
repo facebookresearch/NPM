@@ -5,19 +5,18 @@
 *vscode*
 Makefile
 *tmp*
-*.txt
 *.html
 *.out
 *.err
 *.log
 *.json
 *.npy
+my*
 task_data
 core
 data
 save
 corpus
+train_corpus
 deleted_files
-preprocess
-
 

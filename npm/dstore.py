@@ -65,7 +65,6 @@ class DataStore(object):
             if model_dir is not None:
                 model_dir = os.path.join(model_dir, setting)
         elif setting in ["enwiki", "enwiki-2022"]:
-            assert remove_stopwords or remove_stopwords_except_k
             data_path=[os.path.join(base_dir, setting, "{}.npy".format(idx)) for idx in range(20)]
             if model_dir is not None:
                 model_dir=[os.path.join(model_dir, "{}-{}".format(setting, idx)) for idx in range(20)]
@@ -133,8 +132,7 @@ class DataStore(object):
     def load_stopwords(self):
         if self.remove_stopwords or self.remove_stopwords_except_k:
             stopwords = set()
-            stopwords_dir = "/private/home/sewonmin/token-retrieval/task_data"
-            with open(os.path.join(stopwords_dir, "roberta_stopwords.txt")) as f:
+            with open(os.path.join("config", "roberta_stopwords.txt")) as f:
                 for line in f:
                     stopwords.add(int(line.strip()))
         else:
@@ -195,8 +193,10 @@ class DataStore(object):
                 valid_idxs = set(valid_start) | set(valid_end)
                 curr_dstore_size = 0
 
+                stopword_indices = set()
                 for i, curr_token in enumerate(curr_input_ids):
                     if remove_stopwords and curr_token in stopwords:
+                        stopword_indices.add(i)
                         continue
                     if self.embs_consider_boundary and i not in valid_idxs:
                         continue
@@ -215,6 +215,9 @@ class DataStore(object):
                         self.orig_emb_token_indices_valid.add(global_dstore_size+j)
 
                 if is_valid and self.consider_string_boundary:
+                    if len(stopword_indices)>0:
+                        valid_start = np.array([idx for idx in valid_start if idx not in stopword_indices], dtype=np.uint8)
+                        valid_end = np.array([idx for idx in valid_end if idx not in stopword_indices], dtype=np.uint8)
                     self.orig_block_idx_to_valid_start[offset] = valid_start
                     self.orig_block_idx_to_valid_end[offset] = valid_end
 
@@ -392,8 +395,7 @@ class DataStore(object):
         return sorted_tokens, np.log(knn_prob)
 
     def _get_token(self, token_idx):
-        block_i, token_i = self.token_idx_to_block_idx[token_idx], self.token_idx_to_local_idx
-        #input_ids = self.blocks[block_i]["input_ids"]
+        block_i, token_i = self.token_idx_to_block_idx[token_idx], self.token_idx_to_local_idx[token_idx]
         input_ids = self.input_ids[block_i]
         assert token_i < len(input_ids)
         token_i = input_ids[token_i]
