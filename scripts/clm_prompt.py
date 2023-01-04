@@ -101,7 +101,7 @@ def load_inputs(args):
 
     if args.ret:
         from npm.searcher import BM25Searcher
-        base_dir = "/checkpoint/sewonmin/npm_checkpoints/data"
+        base_dir = "corpus"
         name = "new-enwiki" if ret=="bm25_2022" else "enwiki"
         data_dir = os.path.join(base_dir, name)
         index_dir = os.path.join(base_dir, name + "-index")

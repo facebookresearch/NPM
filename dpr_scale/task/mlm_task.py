@@ -543,8 +543,7 @@ class MaskedLanguageModelingEncodingTask(MaskedLanguageModelingTask):
 
         if self.remove_stopwords:
             stopwords = set()
-            #assert stopwords_dir is not None
-            stopwords_dir = "/private/home/sewonmin/clean-token-retrieval/config"
+            assert stopwords_dir is not None
             with open(os.path.join(stopwords_dir, "roberta_stopwords.txt")) as f:
                 for line in f:
                     stopwords.add(int(line.strip()))
