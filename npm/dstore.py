@@ -547,7 +547,7 @@ class DataStoreUnion(DataStore):
         assert len(indices)==len(self.dstores)
         embs = []
         for dstore, _indices in zip(self.dstores, indices):
-            embs.append(np.array(dstore.get_embs(_indices).tolist()))
-        return np.concatenate(embs, -2)
+            embs.append(dstore.get_embs(_indices))
+        return embs
 
 

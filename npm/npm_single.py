@@ -34,9 +34,15 @@ class NPMSingle(object):
 
     def get_scores(self, queries, x):
         if type(queries)==np.ndarray:
-            all_scores = np.inner(queries, x).squeeze(1) / np.sqrt(self.dstore.dimension)
+            if type(x)==list:
+                all_scores = np.concatenate([self.get_scores(queries, xi) for xi in x], -1)
+            else:
+                all_scores = np.inner(queries, x).squeeze(1) / np.sqrt(self.dstore.dimension)
         else:
-            all_scores = torch.inner(queries, x).squeeze(1) / np.sqrt(self.dstore.dimension)
+            if type(x)==list:
+                all_scores = torch.cat([self.get_scores(queries, xi) for xi in x], -1)
+            else:
+                all_scores = torch.inner(queries, x).squeeze(1) / np.sqrt(self.dstore.dimension)
         return all_scores
 
     def get_all_scores(self, queries):
